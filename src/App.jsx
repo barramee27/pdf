@@ -3,7 +3,7 @@ import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 import { Document as DocxDocument, Packer, Paragraph, ImageRun, AlignmentType } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 
@@ -16,6 +16,10 @@ const Tool = {
   Highlight: 'highlight',
   Erase: 'erase'
 };
+
+function rgb255(r, g, b, a = 1) {
+  return rgb(r / 255, g / 255, b / 255);
+}
 
 export default function App() {
   const [fileName, setFileName] = useState('');
@@ -31,6 +35,17 @@ export default function App() {
   const [highlightAlpha, setHighlightAlpha] = useState(0.2);
   const [isDrawing, setIsDrawing] = useState(false);
   const [dragStart, setDragStart] = useState(null);
+
+  // Advanced tools state
+  const mergeInputRef = useRef(null);
+  const [splitStart, setSplitStart] = useState('1');
+  const [splitEnd, setSplitEnd] = useState('');
+  const [compressScale, setCompressScale] = useState(0.8); // 0.5 - 1.0
+  const [compressQuality, setCompressQuality] = useState(0.75); // JPEG quality
+  const [watermarkText, setWatermarkText] = useState('CONFIDENTIAL');
+  const [watermarkOpacity, setWatermarkOpacity] = useState(0.15);
+  const [watermarkSize, setWatermarkSize] = useState(36);
+  const [numberPages, setNumberPages] = useState(false);
 
   const baseCanvasRef = useRef(null);
   const annoCanvasRef = useRef(null);
@@ -300,6 +315,97 @@ export default function App() {
     saveAs(blob, withExt(fileName, 'pages.docx'));
   };
 
+  // Merge multiple PDFs into one
+  const handlePickMergeFiles = () => mergeInputRef.current?.click();
+  const handleMergeFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length && !fileBytes) return;
+    const out = await PDFDocument.create();
+    // include current opened PDF first if present
+    if (fileBytes) {
+      const src = await PDFDocument.load(fileBytes);
+      const copied = await out.copyPages(src, src.getPageIndices());
+      copied.forEach(p => out.addPage(p));
+    }
+    for (const f of files) {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const src = await PDFDocument.load(buf);
+      const copied = await out.copyPages(src, src.getPageIndices());
+      copied.forEach(p => out.addPage(p));
+    }
+    const bytes = await out.save();
+    saveAs(new Blob([bytes], { type: 'application/pdf' }), withExt(fileName || 'merged', 'merged.pdf'));
+    e.target.value = '';
+  };
+
+  // Split current PDF by range
+  const exportSplitRange = async () => {
+    if (!fileBytes) return;
+    const start = Math.max(1, parseInt(splitStart || '1', 10));
+    const end = Math.min(pageCount || start, parseInt(splitEnd || String(pageCount), 10));
+    if (isNaN(start) || isNaN(end) || start > end) return;
+    const src = await PDFDocument.load(fileBytes);
+    const out = await PDFDocument.create();
+    const indices = Array.from({ length: end - start + 1 }, (_, i) => start - 1 + i);
+    const copied = await out.copyPages(src, indices);
+    copied.forEach(p => out.addPage(p));
+    const bytes = await out.save();
+    saveAs(new Blob([bytes], { type: 'application/pdf' }), withExt(fileName, `p${start}-p${end}.pdf`));
+  };
+
+  // Compress by rasterizing pages to JPEG with lower scale/quality
+  const exportCompressed = async () => {
+    if (!pdf) return;
+    const out = await PDFDocument.create();
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pg = await pdf.getPage(i);
+      const vp = pg.getViewport({ scale: Math.max(0.5, Math.min(1.5, compressScale)) });
+      const c = document.createElement('canvas');
+      c.width = vp.width;
+      c.height = vp.height;
+      const ctx = c.getContext('2d');
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      const dataUrl = c.toDataURL('image/jpeg', Math.max(0.3, Math.min(0.95, compressQuality)));
+      const jpgBytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
+      const img = await out.embedJpg(jpgBytes);
+      const page = out.addPage([vp.width, vp.height]);
+      page.drawImage(img, { x: 0, y: 0, width: vp.width, height: vp.height });
+    }
+    const bytes = await out.save();
+    saveAs(new Blob([bytes], { type: 'application/pdf' }), withExt(fileName, 'compressed.pdf'));
+  };
+
+  // Watermark + page numbers
+  const exportWithWatermarkAndNumbers = async () => {
+    if (!fileBytes) return;
+    const src = await PDFDocument.load(fileBytes);
+    const pages = src.getPages();
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      if (watermarkText) {
+        p.drawText(watermarkText, {
+          x: p.getWidth() / 2 - (watermarkText.length * watermarkSize * 0.15),
+          y: p.getHeight() / 2,
+          size: watermarkSize,
+          color: rgb255(255, 165, 0, watermarkOpacity),
+          rotate: { type: 'degrees', angle: 30 },
+          opacity: Math.max(0.05, Math.min(0.5, watermarkOpacity))
+        });
+      }
+      if (numberPages) {
+        const label = `${i + 1} / ${pages.length}`;
+        p.drawText(label, {
+          x: p.getWidth() / 2 - (label.length * 6),
+          y: 24,
+          size: 12,
+          color: rgb255(80, 80, 80, 0.9)
+        });
+      }
+    }
+    const bytes = await src.save();
+    saveAs(new Blob([bytes], { type: 'application/pdf' }), withExt(fileName, 'watermark.pdf'));
+  };
+
   return (
     <div className="app-shell">
       <div className="topbar">
@@ -349,6 +455,36 @@ export default function App() {
         <button className="tool-button" onClick={exportDocxFromText}>Export DOCX (text)</button>
         <button className="tool-button" onClick={exportDocxFromImages}>Export DOCX (pages as images)</button>
         <button className="tool-button" onClick={exportPptx}>Export PPTX (pages as slides)</button>
+
+        {/* Merge */}
+        <button className="tool-button" onClick={handlePickMergeFiles}>Merge with PDFs…</button>
+        <input ref={mergeInputRef} type="file" accept="application/pdf" multiple onChange={handleMergeFiles} style={{ display:'none' }} />
+
+        {/* Split */}
+        <div className="tool-group">
+          <label>Split pages
+            <input style={{ width: 48, marginLeft: 6 }} value={splitStart} onChange={e=>setSplitStart(e.target.value)} />
+            –
+            <input style={{ width: 48, marginLeft: 6 }} value={splitEnd} onChange={e=>setSplitEnd(e.target.value)} placeholder={`${pageCount}`} />
+          </label>
+          <button className="tool-button" onClick={exportSplitRange}>Export Split</button>
+        </div>
+
+        {/* Compress */}
+        <div className="tool-group">
+          <label>Scale <input type="range" min="0.5" max="1.0" step="0.05" value={compressScale} onChange={e=>setCompressScale(parseFloat(e.target.value))} /></label>
+          <label>Quality <input type="range" min="0.3" max="0.95" step="0.05" value={compressQuality} onChange={e=>setCompressQuality(parseFloat(e.target.value))} /></label>
+          <button className="tool-button" onClick={exportCompressed}>Export Compressed PDF</button>
+        </div>
+
+        {/* Watermark & Page numbers */}
+        <div className="tool-group">
+          <input placeholder="Watermark text" value={watermarkText} onChange={e=>setWatermarkText(e.target.value)} style={{ padding: 6, borderRadius: 6, border: '1px solid #334155', background:'#0b1220', color:'#e5e7eb' }} />
+          <label>Opacity <input type="range" min="0.05" max="0.5" step="0.05" value={watermarkOpacity} onChange={e=>setWatermarkOpacity(parseFloat(e.target.value))} /></label>
+          <label>Size <input type="range" min="18" max="64" step="2" value={watermarkSize} onChange={e=>setWatermarkSize(parseInt(e.target.value,10))} /></label>
+          <label><input type="checkbox" checked={numberPages} onChange={e=>setNumberPages(e.target.checked)} /> Page numbers</label>
+          <button className="tool-button" onClick={exportWithWatermarkAndNumbers}>Export Watermarked</button>
+        </div>
       </div>
     </div>
   );
