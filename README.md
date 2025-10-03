@@ -84,7 +84,7 @@ npm run preview
 - Drag-and-drop file support
 
 ### License
-MIT. See LICENSE if added to this repository.
+MIT — see `LICENSE` for details.
 
 ### Acknowledgements
 - Mozilla pdf.js (`pdfjs-dist`)
