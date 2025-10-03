@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { PDFDocument } from 'pdf-lib';
-import { Document as DocxDocument, Packer, Paragraph } from 'docx';
+import { Document as DocxDocument, Packer, Paragraph, ImageRun } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -272,6 +272,31 @@ export default function App() {
     saveAs(blob, withExt(fileName, 'pptx'));
   };
 
+  const exportDocxFromImages = async () => {
+    if (!pdf) return;
+    const children = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const dataUrl = await renderPageToPngDataUrl(i);
+      const res = await fetch(dataUrl);
+      const buf = await res.arrayBuffer();
+      // Scale image to page width (~720px) keeping aspect ratio
+      // Use viewport ratio based on current scale render
+      const pg = await pdf.getPage(i);
+      const vp = pg.getViewport({ scale });
+      const targetWidth = 720;
+      const ratio = targetWidth / vp.width;
+      const targetHeight = Math.round(vp.height * ratio);
+      children.push(new Paragraph({
+        children: [
+          new ImageRun({ data: new Uint8Array(buf), transformation: { width: targetWidth, height: targetHeight } })
+        ]
+      }));
+    }
+    const doc = new DocxDocument({ sections: [{ properties: {}, children }] });
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, withExt(fileName, 'pages.docx'));
+  };
+
   return (
     <div className="app-shell">
       <div className="topbar">
@@ -319,6 +344,7 @@ export default function App() {
         <button className="tool-button" onClick={exportAllPagesAsZip}>Export All Pages as ZIP (PNG)</button>
         <button className="tool-button" onClick={exportText}>Export TXT (all pages)</button>
         <button className="tool-button" onClick={exportDocxFromText}>Export DOCX (text)</button>
+        <button className="tool-button" onClick={exportDocxFromImages}>Export DOCX (pages as images)</button>
         <button className="tool-button" onClick={exportPptx}>Export PPTX (pages as slides)</button>
       </div>
     </div>
