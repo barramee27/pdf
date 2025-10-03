@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { PDFDocument } from 'pdf-lib';
-import { Document as DocxDocument, Packer, Paragraph, ImageRun } from 'docx';
+import { Document as DocxDocument, Packer, Paragraph, ImageRun, AlignmentType } from 'docx';
 import PptxGenJS from 'pptxgenjs';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -280,13 +280,16 @@ export default function App() {
       const res = await fetch(dataUrl);
       const buf = await res.arrayBuffer();
       // Scale image to page width (~720px) keeping aspect ratio
-      // Use viewport ratio based on current scale render
+      // Fit inside typical content area (letter: ~624x864 px). Use min fit for both dimensions.
       const pg = await pdf.getPage(i);
       const vp = pg.getViewport({ scale });
-      const targetWidth = 720;
-      const ratio = targetWidth / vp.width;
-      const targetHeight = Math.round(vp.height * ratio);
+      const maxW = 620; // content width within margins
+      const maxH = 860; // content height within margins
+      const fit = Math.min(maxW / vp.width, maxH / vp.height);
+      const targetWidth = Math.round(vp.width * fit);
+      const targetHeight = Math.round(vp.height * fit);
       children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
         children: [
           new ImageRun({ data: new Uint8Array(buf), transformation: { width: targetWidth, height: targetHeight } })
         ]
