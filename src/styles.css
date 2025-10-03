@@ -1,0 +1,99 @@
+:root {
+  --bg: #0b1220;
+  --panel: #111827;
+  --muted: #9ca3af;
+  --text: #e5e7eb;
+  --primary: #0ea5e9;
+  --accent: #f59e0b;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--panel);
+  border-bottom: 1px solid #1f2937;
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.topbar input[type="file"] {
+  color: var(--text);
+}
+
+.tool-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tool-button {
+  background: #1f2937;
+  border: 1px solid #334155;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tool-button.active { outline: 2px solid var(--primary); }
+
+.canvas-wrap {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 8px;
+  padding: 12px;
+}
+
+.page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.page-stage {
+  position: relative;
+  margin: 0 auto;
+  background: #0f172a;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+canvas { display: block; }
+
+.export-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: var(--panel);
+  border-top: 1px solid #1f2937;
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .topbar, .export-bar { padding-bottom: 16px; }
+}
+
