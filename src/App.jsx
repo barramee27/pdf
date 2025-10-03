@@ -4,6 +4,8 @@ import JSZip from 'jszip';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { PDFDocument } from 'pdf-lib';
+import { Document as DocxDocument, Packer, Paragraph } from 'docx';
+import PptxGenJS from 'pptxgenjs';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -219,10 +221,55 @@ export default function App() {
     saveAs(content, withExt(fileName, 'pages.zip'));
   };
 
-  const downloadWithExtension = (ext) => {
-    if (!fileBytes) return;
-    const blob = new Blob([fileBytes]);
-    saveAs(blob, withExt(fileName, ext));
+  const exportDocxFromText = async () => {
+    if (!pdf) return;
+    // Reuse text extraction
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const strings = content.items.map(it => it.str);
+      text += strings.join(' ') + '\n\n';
+    }
+    const paragraphs = text.split(/\n\n+/).map(chunk => new Paragraph({ text: chunk }));
+    const doc = new DocxDocument({ sections: [{ properties: {}, children: paragraphs }] });
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, withExt(fileName, 'docx'));
+  };
+
+  const renderPageToPngDataUrl = async (pageIndex) => {
+    const pg = await pdf.getPage(pageIndex);
+    const vp = pg.getViewport({ scale });
+    const base = document.createElement('canvas');
+    base.width = vp.width;
+    base.height = vp.height;
+    const bctx = base.getContext('2d');
+    await pg.render({ canvasContext: bctx, viewport: vp }).promise;
+
+    const combo = document.createElement('canvas');
+    combo.width = base.width;
+    combo.height = base.height;
+    const cctx = combo.getContext('2d');
+    cctx.drawImage(base, 0, 0);
+    if (pageIndex === pageNumber) {
+      cctx.drawImage(annoCanvasRef.current, 0, 0);
+    }
+    return combo.toDataURL('image/png');
+  };
+
+  const exportPptx = async () => {
+    if (!pdf) return;
+    const pptx = new PptxGenJS();
+    pptx.layout = 'LAYOUT_WIDE';
+    const slideW = 13.33; // widescreen default width
+    const slideH = 7.5;   // widescreen default height
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const dataUrl = await renderPageToPngDataUrl(i);
+      const slide = pptx.addSlide();
+      slide.addImage({ data: dataUrl, x: 0, y: 0, w: slideW, h: slideH });
+    }
+    const blob = await pptx.write('blob');
+    saveAs(blob, withExt(fileName, 'pptx'));
   };
 
   return (
@@ -271,12 +318,8 @@ export default function App() {
         <button className="tool-button" onClick={exportCurrentPagePng}>Export Current Page PNG</button>
         <button className="tool-button" onClick={exportAllPagesAsZip}>Export All Pages as ZIP (PNG)</button>
         <button className="tool-button" onClick={exportText}>Export TXT (all pages)</button>
-        <div className="tool-group">
-          <label>Save as extension: </label>
-          <button className="tool-button" onClick={()=>downloadWithExtension('docx')}>.docx</button>
-          <button className="tool-button" onClick={()=>downloadWithExtension('jpg')}>.jpg</button>
-          <button className="tool-button" onClick={()=>downloadWithExtension('zip')}>.zip</button>
-        </div>
+        <button className="tool-button" onClick={exportDocxFromText}>Export DOCX (text)</button>
+        <button className="tool-button" onClick={exportPptx}>Export PPTX (pages as slides)</button>
       </div>
     </div>
   );
