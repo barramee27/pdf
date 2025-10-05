@@ -6,6 +6,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.js?url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { Document as DocxDocument, Packer, Paragraph, ImageRun, AlignmentType } from 'docx';
 import PptxGenJS from 'pptxgenjs';
+import * as XLSX from 'xlsx';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -274,17 +275,70 @@ export default function App() {
 
   const exportPptx = async () => {
     if (!pdf) return;
+    // Detect orientation from first page
+    const firstPage = await pdf.getPage(1);
+    const firstVp = firstPage.getViewport({ scale: 1 });
+    const isPortrait = firstVp.height >= firstVp.width;
     const pptx = new PptxGenJS();
-    pptx.layout = 'LAYOUT_WIDE';
-    const slideW = 13.33; // widescreen default width
-    const slideH = 7.5;   // widescreen default height
+    if (isPortrait) {
+      // Define a tall custom layout for portrait pages
+      pptx.defineLayout({ name: 'LAYOUT_TALL', width: 7.5, height: 13.33 });
+      pptx.layout = 'LAYOUT_TALL';
+    } else {
+      pptx.layout = 'LAYOUT_WIDE';
+    }
+    const slideW = pptx.presLayout.width;
+    const slideH = pptx.presLayout.height;
+    const margin = 0.25; // inches
+    const boxW = slideW - margin * 2;
+    const boxH = slideH - margin * 2;
     for (let i = 1; i <= pdf.numPages; i++) {
+      const pg = await pdf.getPage(i);
+      const vp = pg.getViewport({ scale: 1 });
+      const imgAR = vp.width / vp.height;
+      const boxAR = boxW / boxH;
+      let w, h;
+      if (imgAR > boxAR) {
+        w = boxW;
+        h = w / imgAR;
+      } else {
+        h = boxH;
+        w = h * imgAR;
+      }
+      const x = (slideW - w) / 2;
+      const y = (slideH - h) / 2;
       const dataUrl = await renderPageToPngDataUrl(i);
       const slide = pptx.addSlide();
-      slide.addImage({ data: dataUrl, x: 0, y: 0, w: slideW, h: slideH });
+      slide.addImage({ data: dataUrl, x, y, w, h });
     }
     const blob = await pptx.write('blob');
     saveAs(blob, withExt(fileName, 'pptx'));
+  };
+
+  const exportExcel = async () => {
+    if (!pdf) return;
+    const wb = XLSX.utils.book_new();
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const lines = [];
+      let cur = '';
+      for (const item of content.items) {
+        const frag = item.str || '';
+        if (!frag) continue;
+        cur += (cur ? ' ' : '') + frag;
+        if (item.hasEOL) {
+          lines.push([cur]);
+          cur = '';
+        }
+      }
+      if (cur) lines.push([cur]);
+      const ws = XLSX.utils.aoa_to_sheet(lines.length ? lines : [["" ]]);
+      XLSX.utils.book_append_sheet(wb, ws, `Page ${i}`);
+    }
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, withExt(fileName, 'xlsx'));
   };
 
   const exportDocxFromImages = async () => {
@@ -455,6 +509,7 @@ export default function App() {
         <button className="tool-button" onClick={exportDocxFromText}>Export DOCX (text)</button>
         <button className="tool-button" onClick={exportDocxFromImages}>Export DOCX (pages as images)</button>
         <button className="tool-button" onClick={exportPptx}>Export PPTX (pages as slides)</button>
+        <button className="tool-button" onClick={exportExcel}>Export Excel (editable)</button>
 
         {/* Merge */}
         <button className="tool-button" onClick={handlePickMergeFiles}>Merge with PDFs…</button>
