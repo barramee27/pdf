@@ -318,22 +318,67 @@ export default function App() {
   const exportExcel = async () => {
     if (!pdf) return;
     const wb = XLSX.utils.book_new();
+    // Try to reconstruct tables: group by line (y), then map items to columns by x
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
+      const vp = page.getViewport({ scale: 1 });
       const content = await page.getTextContent();
+      const items = content.items.map(it => {
+        const t = it.transform || it?.matrix || [1,0,0,1,0,0];
+        const x = t[4];
+        const y = vp.height - t[5]; // invert to top-origin
+        return { str: it.str || '', x, y, width: it.width || 0 };
+      }).filter(it => it.str.trim().length);
+
+      // Group into lines by y with tolerance
+      const yTol = 4; // px
+      items.sort((a,b) => a.y - b.y || a.x - b.x);
       const lines = [];
-      let cur = '';
-      for (const item of content.items) {
-        const frag = item.str || '';
-        if (!frag) continue;
-        cur += (cur ? ' ' : '') + frag;
-        if (item.hasEOL) {
-          lines.push([cur]);
-          cur = '';
+      for (const it of items) {
+        let line = lines.find(l => Math.abs(l.y - it.y) <= yTol);
+        if (!line) { line = { y: it.y, cells: [] }; lines.push(line); }
+        line.cells.push(it);
+      }
+      lines.forEach(l => l.cells.sort((a,b)=>a.x-b.x));
+
+      // Determine column anchors from first few lines
+      const sampleLines = lines.slice(0, Math.min(8, lines.length));
+      const anchors = [];
+      const xTol = 10;
+      for (const l of sampleLines) {
+        for (const c of l.cells) {
+          const found = anchors.find(a => Math.abs(a - c.x) <= xTol);
+          if (!found) anchors.push(c.x);
         }
       }
-      if (cur) lines.push([cur]);
-      const ws = XLSX.utils.aoa_to_sheet(lines.length ? lines : [["" ]]);
+      anchors.sort((a,b)=>a-b);
+      // Merge close anchors
+      const merged = [];
+      for (const x of anchors) {
+        const last = merged[merged.length-1];
+        if (last == null || Math.abs(last - x) > xTol) merged.push(x);
+      }
+      const cols = merged;
+
+      // Build AOA rows
+      const aoa = [];
+      for (const l of lines) {
+        if (!l.cells.length) continue;
+        const row = Array(cols.length).fill('');
+        for (const c of l.cells) {
+          // find nearest column
+          let idx = 0, best = Infinity;
+          for (let k=0;k<cols.length;k++) {
+            const d = Math.abs(cols[k] - c.x);
+            if (d < best) { best = d; idx = k; }
+          }
+          row[idx] = row[idx] ? row[idx] + ' ' + c.str : c.str;
+        }
+        aoa.push(row);
+      }
+
+      const sheetData = aoa.length ? aoa : [[content.items.map(it=>it.str).join(' ')]];
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
       XLSX.utils.book_append_sheet(wb, ws, `Page ${i}`);
     }
     const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
